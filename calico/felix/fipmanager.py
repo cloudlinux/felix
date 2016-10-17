@@ -83,9 +83,11 @@ class FloatingIPManager(Actor):
         # the same data results in the same IP being used for the SNAT.
         for nat_maps in sorted(self._maps.values()):
             for nat_map in nat_maps:
-                dnat.append('--append %s -d %s -j DNAT --to-destination %s' %
-                            (CHAIN_FIP_DNAT, nat_map['ext_ip'],
-                             nat_map['int_ip']))
+                # Kuberdock fix: we don't want DNAT as soon as kube-proxy
+                # manages public IP
+                #dnat.append('--append %s -d %s -j DNAT --to-destination %s' %
+                            #(CHAIN_FIP_DNAT, nat_map['ext_ip'],
+                             #nat_map['int_ip']))
                 if not nat_map['int_ip'] in reverse_maps:
                     # In order for an endpoint to be able to connect to its
                     # own floating IP, we have to do an SNAT.  Otherwise the
@@ -106,9 +108,10 @@ class FloatingIPManager(Actor):
                     # swap by utilizing packet marking, but doing so would make
                     # the code much more complicated and create another
                     # iptables rule per floating IP.
-                    snat.append('--append %s -s %s -d %s -j SNAT '
+                    snat.append('--append %s -s %s '
+                                '-m set ! --match-set felix-all-ipam-pools dst'
+                                ' -j SNAT '
                                 '--to-source %s' % (CHAIN_FIP_SNAT,
-                                                    nat_map['int_ip'],
                                                     nat_map['int_ip'],
                                                     nat_map['ext_ip']))
                     reverse_maps.append(nat_map['int_ip'])
