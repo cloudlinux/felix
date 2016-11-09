@@ -537,6 +537,9 @@ def ipv6_supported():
         return False, "/proc/sys/net/ipv6 is missing (IPv6 compiled out?)"
     try:
         check_call(["which", "ip6tables"])
+        # Kuberdock fix for rhosts on centos 6
+        # nat table does not exist in ip6tables on centos6
+        check_call(["grep", "-q", "nat", "/proc/net/ip6_tables_names"])
     except FailedSystemCall:
         return False, ("ip6tables not installed; Calico IPv6 support requires "
                        "Linux kernel v3.3 or above and ip6tables v1.4.14 or "
