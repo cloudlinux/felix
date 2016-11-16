@@ -20,8 +20,10 @@ felix.fipmanager
 Actor that controls floating IP entries in the nat iptables table.
 """
 import logging
+import time
 from calico.felix.frules import CHAIN_FIP_DNAT, CHAIN_FIP_SNAT
 from calico.felix.actor import Actor, actor_message
+from calico.felix.ipsets import Ipset, FELIX_PFX
 
 _log = logging.getLogger(__name__)
 
@@ -79,6 +81,7 @@ class FloatingIPManager(Actor):
         dnat = []
         snat = []
         reverse_maps = []
+        all_ipam_pools = FELIX_PFX + "all-ipam-pools"
         # Since we don't use ordered dicts, sort to make sure each call with
         # the same data results in the same IP being used for the SNAT.
         for nat_maps in sorted(self._maps.values()):
@@ -109,13 +112,42 @@ class FloatingIPManager(Actor):
                     # the code much more complicated and create another
                     # iptables rule per floating IP.
                     snat.append('--append %s -s %s '
-                                '-m set ! --match-set felix-all-ipam-pools dst'
+                                '-m set ! --match-set %s dst'
                                 ' -j SNAT '
                                 '--to-source %s' % (CHAIN_FIP_SNAT,
                                                     nat_map['int_ip'],
+                                                    all_ipam_pools,
                                                     nat_map['ext_ip']))
                     reverse_maps.append(nat_map['int_ip'])
 
+        if snat:
+            # Kuberdock specific. We can create our snat rules only if
+            # all_ipam_pools ipset already exists. In some cases it doesn't
+            # exist at the moment when these rules are creating. So we wait
+            # this ipset appearance (look at wait_for_ipset docstring for more
+            # info).
+            wait_for_ipset(all_ipam_pools)
         self.iptables_updater.rewrite_chains({CHAIN_FIP_DNAT: dnat,
                                               CHAIN_FIP_SNAT: snat}, {},
                                              async=True)
+
+
+def wait_for_ipset(ipset_name):
+    """Waits for a given ipset name exists in ipset list.
+    Kuberdock specific.
+    If it not exists after specified period of time (2 minutes now),
+    then it will be created on our own risk.
+    """
+    ips = Ipset(ipset_name, '', 'inet', "hash:net")
+    retry_count = 120
+    retry_pause = 1
+    for i in range(retry_count):
+        if ips.exists():
+            return
+        _log.info(
+            "KUBERDOCK: wait_for_ipset(%s) check failed, retry count: %s",
+            ipset_name, i
+        )
+        time.sleep(retry_pause)
+    _log.info("KUBERDOCK: Force create of ipset '%s'", ipset_name)
+    ips.ensure_exists()
